@@ -18,6 +18,8 @@ package provider
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestEnsureTrailingDot(t *testing.T) {
@@ -34,4 +36,16 @@ func TestEnsureTrailingDot(t *testing.T) {
 			t.Errorf("expected %s, got %s", tc.expected, output)
 		}
 	}
+}
+
+func TestBaseProviderAttributeEquality(t *testing.T) {
+	p := BaseProvider{}
+	foo := "Foo"
+	bar := "Bar"
+
+	assert.True(t, p.AttributeValuesEqual("some.attribute", nil, nil), "Both attributes not present")
+	assert.False(t, p.AttributeValuesEqual("some.attribute", nil, &foo), "First attribute missing")
+	assert.False(t, p.AttributeValuesEqual("some.attribute", &foo, nil), "Second attribute missing")
+	assert.True(t, p.AttributeValuesEqual("some.attribute", &foo, &foo), "Attributes the same")
+	assert.False(t, p.AttributeValuesEqual("some.attribute", &foo, &bar), "Attributes differ")
 }
