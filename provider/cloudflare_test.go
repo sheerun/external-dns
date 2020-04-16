@@ -28,10 +28,11 @@ import (
 
 	"sigs.k8s.io/external-dns/endpoint"
 	"sigs.k8s.io/external-dns/plan"
-	"sigs.k8s.io/external-dns/source"
 )
 
-type mockCloudFlareClient struct{}
+type mockCloudFlareClient struct {
+	proxied bool
+}
 
 func (m *mockCloudFlareClient) CreateDNSRecord(zoneID string, rr cloudflare.DNSRecord) (*cloudflare.DNSRecordResponse, error) {
 	return nil, nil
@@ -40,8 +41,8 @@ func (m *mockCloudFlareClient) CreateDNSRecord(zoneID string, rr cloudflare.DNSR
 func (m *mockCloudFlareClient) DNSRecords(zoneID string, rr cloudflare.DNSRecord) ([]cloudflare.DNSRecord, error) {
 	if zoneID == "1234567890" {
 		return []cloudflare.DNSRecord{
-				{ID: "1234567890", Name: "foobar.ext-dns-test.zalando.to.", Type: endpoint.RecordTypeA, TTL: 120},
-				{ID: "1231231233", Name: "foo.bar.com", TTL: 1}},
+				{ID: "1234567890", Name: "foobar.ext-dns-test.zalando.to.", Type: endpoint.RecordTypeA, TTL: 120, Proxied: m.proxied},
+				{ID: "1231231233", Name: "foo.bar.com", TTL: 1, Proxied: m.proxied}},
 			nil
 	}
 	return nil, nil
@@ -607,49 +608,80 @@ func TestGroupByNameAndType(t *testing.T) {
 	}
 }
 
-func runBaseProviderTest(t *testing.T, cp plan.AttributeComparator) {
-	foo := "Foo"
-	bar := "Bar"
-
-	assert.True(t, cp.AttributeValuesEqual("some.attribute", nil, nil), "Both attributes not present")
-	assert.False(t, cp.AttributeValuesEqual("some.attribute", nil, &foo), "First attribute missing")
-	assert.False(t, cp.AttributeValuesEqual("some.attribute", &foo, nil), "Second attribute missing")
-	assert.True(t, cp.AttributeValuesEqual("some.attribute", &foo, &foo), "Attributes the same")
-	assert.False(t, cp.AttributeValuesEqual("some.attribute", &foo, &bar), "Attributes differ")
-}
-
-func TestAttributeEquality(t *testing.T) {
-	provNoProxy := &CloudFlareProvider{
-		Client:           &mockCloudFlareClient{},
-		proxiedByDefault: false,
+func TestProviderPropertiesIdempotency(t *testing.T) {
+	testCases := []struct {
+		ProviderProxiedByDefault bool
+		RecordsAreProxied        bool
+		ShouldBeUpdated          bool
+	}{
+		{
+			ProviderProxiedByDefault: false,
+			RecordsAreProxied:        false,
+			ShouldBeUpdated:          false,
+		},
+		{
+			ProviderProxiedByDefault: true,
+			RecordsAreProxied:        true,
+			ShouldBeUpdated:          false,
+		},
+		{
+			ProviderProxiedByDefault: true,
+			RecordsAreProxied:        false,
+			ShouldBeUpdated:          true,
+		},
+		{
+			ProviderProxiedByDefault: false,
+			RecordsAreProxied:        true,
+			ShouldBeUpdated:          true,
+		},
 	}
 
-	provProxy := &CloudFlareProvider{
-		Client:           &mockCloudFlareClient{},
-		proxiedByDefault: true,
+	for _, test := range testCases {
+		provider := &CloudFlareProvider{
+			Client:           &mockCloudFlareClient{proxied: test.RecordsAreProxied},
+			proxiedByDefault: test.ProviderProxiedByDefault,
+		}
+		ctx := context.Background()
+
+		current, err := provider.Records(ctx)
+		if err != nil {
+			t.Errorf("should not fail, %s", err)
+		}
+		assert.Equal(t, 1, len(current))
+
+		desired := []*endpoint.Endpoint{}
+		for _, c := range current {
+			// Copy all except ProviderSpecific fields
+			desired = append(desired, &endpoint.Endpoint{
+				DNSName:       c.DNSName,
+				Targets:       c.Targets,
+				RecordType:    c.RecordType,
+				SetIdentifier: c.SetIdentifier,
+				RecordTTL:     c.RecordTTL,
+				Labels:        c.Labels,
+			})
+		}
+
+		plan := plan.Plan{
+			Current:            current,
+			Desired:            desired,
+			PropertyComparator: provider.PropertyValuesEqual,
+		}
+
+		plan = *plan.Calculate()
+		assert.NotNil(t, plan.Changes, "should have plan")
+		if plan.Changes == nil {
+			return
+		}
+		assert.Equal(t, 0, len(plan.Changes.Create), "should not have creates")
+		assert.Equal(t, 0, len(plan.Changes.Delete), "should not have deletes")
+
+		if test.ShouldBeUpdated {
+			assert.Equal(t, 1, len(plan.Changes.UpdateNew), "should not have new updates")
+			assert.Equal(t, 1, len(plan.Changes.UpdateOld), "should not have old updates")
+		} else {
+			assert.Equal(t, 0, len(plan.Changes.UpdateNew), "should not have new updates")
+			assert.Equal(t, 0, len(plan.Changes.UpdateOld), "should not have old updates")
+		}
 	}
-
-	trueStr := "true"
-	falseStr := "false"
-
-	// Check behaviour for cloudflare-proxied attribute
-	assert.True(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, nil), "Both defaulted")
-	assert.True(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, &falseStr), "First defaulted, second equal")
-	assert.False(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, &trueStr), "First defaulted, second not equal")
-	assert.True(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &falseStr, nil), "Second defaulted, first equal")
-	assert.False(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &trueStr, nil), "Second defaulted, first not equal")
-	assert.True(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &trueStr, &trueStr), "Both equal, true")
-	assert.True(t, provNoProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &falseStr, &falseStr), "Both equal, false")
-
-	assert.True(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, nil), "Both defaulted")
-	assert.True(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, &trueStr), "First defaulted, second equal")
-	assert.False(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, nil, &falseStr), "First defaulted, second not equal")
-	assert.True(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &trueStr, nil), "Second defaulted, first equal")
-	assert.False(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &falseStr, nil), "Second defaulted, first not equal")
-	assert.True(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &trueStr, &trueStr), "Both equal, true")
-	assert.True(t, provProxy.AttributeValuesEqual(source.CloudflareProxiedKey, &falseStr, &falseStr), "Both equal, false")
-
-	// Test base provider behaviour
-	runBaseProviderTest(t, provNoProxy)
-	runBaseProviderTest(t, provProxy)
 }

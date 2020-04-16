@@ -29,22 +29,14 @@ import (
 type Provider interface {
 	Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 	ApplyChanges(ctx context.Context, changes *plan.Changes) error
-	AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool
+	PropertyValuesEqual(name string, previous string, current string) bool
 }
 
 type BaseProvider struct {
 }
 
-func (b BaseProvider) AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool {
-	if (value1 == nil) != (value2 == nil) {
-		return false
-	}
-
-	if value1 == nil {
-		return true
-	}
-
-	return *value1 == *value2
+func (b BaseProvider) PropertyValuesEqual(name, previous, current string) bool {
+	return previous == current
 }
 
 type contextKey struct {

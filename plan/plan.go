@@ -18,14 +18,14 @@ package plan
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	"sigs.k8s.io/external-dns/endpoint"
 )
 
-type AttributeComparator interface {
-	AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool
-}
+type PropertyComparator func(name string, previous string, current string) bool
 
 // Plan can convert a list of desired and current records to a series of create,
 // update and delete actions.
@@ -41,6 +41,8 @@ type Plan struct {
 	Changes *Changes
 	// DomainFilter matches DNS names
 	DomainFilter endpoint.DomainFilter
+	// Property comparator compares custom properties of providers
+	PropertyComparator PropertyComparator
 }
 
 // Changes holds lists of actions to be executed by dns providers
@@ -114,7 +116,7 @@ func (t planTable) addCandidate(e *endpoint.Endpoint) {
 // Calculate computes the actions needed to move current state towards desired
 // state. It then passes those changes to the current policy for further
 // processing. It returns a copy of Plan with the changes populated.
-func (p *Plan) Calculate(ac AttributeComparator) *Plan {
+func (p *Plan) Calculate() *Plan {
 	t := newPlanTable()
 
 	for _, current := range filterRecordsForPlan(p.Current, p.DomainFilter) {
@@ -139,7 +141,7 @@ func (p *Plan) Calculate(ac AttributeComparator) *Plan {
 			if row.current != nil && len(row.candidates) > 0 { //dns name is taken
 				update := t.resolver.ResolveUpdate(row.current, row.candidates)
 				// compare "update" to "current" to figure out if actual update is required
-				if shouldUpdateTTL(update, row.current) || targetChanged(update, row.current) || shouldUpdateProviderSpecific(ac, update, row.current) {
+				if shouldUpdateTTL(update, row.current) || targetChanged(update, row.current) || p.shouldUpdateProviderSpecific(update, row.current) {
 					inheritOwner(row.current, update)
 					changes.UpdateNew = append(changes.UpdateNew, update)
 					changes.UpdateOld = append(changes.UpdateOld, row.current)
@@ -182,44 +184,39 @@ func shouldUpdateTTL(desired, current *endpoint.Endpoint) bool {
 	return desired.RecordTTL != current.RecordTTL
 }
 
-func shouldUpdateProviderSpecific(ac AttributeComparator, desired, current *endpoint.Endpoint) bool {
-	if current.ProviderSpecific == nil && len(desired.ProviderSpecific) == 0 {
-		return false
-	}
-	for _, c := range current.ProviderSpecific {
-		// don't consider target health when detecting changes
-		// see: https://github.com/kubernetes-sigs/external-dns/issues/869#issuecomment-458576954
-		if c.Name == "aws/evaluate-target-health" {
-			continue
-		}
+func (p *Plan) shouldUpdateProviderSpecific(desired, current *endpoint.Endpoint) bool {
+	desiredProperties := map[string]endpoint.ProviderSpecificProperty{}
 
-		found := false
+	if desired.ProviderSpecific != nil {
 		for _, d := range desired.ProviderSpecific {
-			if d.Name == c.Name {
-				if !ac.AttributeValuesEqual(c.Name, &c.Value, &d.Value) {
-					// provider-specific attribute updated
+			desiredProperties[d.Name] = d
+		}
+	}
+	if current.ProviderSpecific != nil {
+		for _, c := range current.ProviderSpecific {
+			// don't consider target health when detecting changes
+			// see: https://github.com/kubernetes-sigs/external-dns/issues/869#issuecomment-458576954
+			if c.Name == "aws/evaluate-target-health" {
+				continue
+			}
+
+			if d, ok := desiredProperties[c.Name]; ok {
+				if p.PropertyComparator != nil {
+					if !p.PropertyComparator(c.Name, c.Value, d.Value) {
+						return true
+					}
+				} else if c.Value != d.Value {
 					return true
 				}
-				found = true
-				break
+			} else {
+				if p.PropertyComparator != nil {
+					if !p.PropertyComparator(c.Name, c.Value, "") {
+						return true
+					}
+				} else if c.Value != "" {
+					return true
+				}
 			}
-		}
-		if !found {
-			// provider-specific attribute deleted
-			return !ac.AttributeValuesEqual(c.Name, &c.Value, nil)
-		}
-	}
-	for _, d := range desired.ProviderSpecific {
-		found := false
-		for _, c := range current.ProviderSpecific {
-			if d.Name == c.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			// provider-specific attribute added
-			return !ac.AttributeValuesEqual(d.Name, nil, &d.Value)
 		}
 	}
 
@@ -263,4 +260,28 @@ func normalizeDNSName(dnsName string) string {
 		s += "."
 	}
 	return s
+}
+
+func CompareBoolean(defaultValue bool, name, current, previous string) bool {
+	var err error
+
+	v1, v2 := defaultValue, defaultValue
+
+	if previous != "" {
+		v1, err = strconv.ParseBool(previous)
+		if err != nil {
+			log.Errorf("Failed to parse previous property [%s]: %v", name, previous)
+			v1 = defaultValue
+		}
+	}
+
+	if current != "" {
+		v2, err = strconv.ParseBool(current)
+		if err != nil {
+			log.Errorf("Failed to parse current property [%s]: %v", name, current)
+			v2 = defaultValue
+		}
+	}
+
+	return v1 == v2
 }

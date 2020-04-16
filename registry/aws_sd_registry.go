@@ -88,7 +88,6 @@ func (sdr *AWSSDRegistry) updateLabels(endpoints []*endpoint.Endpoint) {
 	}
 }
 
-// AttributeValuesEqual compares two attribute values for equality
-func (sdr *AWSSDRegistry) AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool {
-	return sdr.provider.AttributeValuesEqual(attribute, value1, value2)
+func (sdr *AWSSDRegistry) PropertyValuesEqual(name string, previous string, current string) bool {
+	return sdr.provider.PropertyValuesEqual(name, previous, current)
 }

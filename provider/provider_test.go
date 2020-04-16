@@ -38,14 +38,11 @@ func TestEnsureTrailingDot(t *testing.T) {
 	}
 }
 
-func TestBaseProviderAttributeEquality(t *testing.T) {
+func TestBaseProviderPropertyEquality(t *testing.T) {
 	p := BaseProvider{}
-	foo := "Foo"
-	bar := "Bar"
-
-	assert.True(t, p.AttributeValuesEqual("some.attribute", nil, nil), "Both attributes not present")
-	assert.False(t, p.AttributeValuesEqual("some.attribute", nil, &foo), "First attribute missing")
-	assert.False(t, p.AttributeValuesEqual("some.attribute", &foo, nil), "Second attribute missing")
-	assert.True(t, p.AttributeValuesEqual("some.attribute", &foo, &foo), "Attributes the same")
-	assert.False(t, p.AttributeValuesEqual("some.attribute", &foo, &bar), "Attributes differ")
+	assert.True(t, p.PropertyValuesEqual("some.property", "", ""), "Both properties not present")
+	assert.False(t, p.PropertyValuesEqual("some.property", "", "Foo"), "First property missing")
+	assert.False(t, p.PropertyValuesEqual("some.property", "Foo", ""), "Second property missing")
+	assert.True(t, p.PropertyValuesEqual("some.property", "Foo", "Foo"), "Properties the same")
+	assert.False(t, p.PropertyValuesEqual("some.property", "Foo", "Bar"), "Attributes differ")
 }

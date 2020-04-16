@@ -211,34 +211,12 @@ func (p *CloudFlareProvider) ApplyChanges(ctx context.Context, changes *plan.Cha
 	return p.submitChanges(ctx, combinedChanges)
 }
 
-// AttributeValuesEqual compares two attribute values for equality
-func (p *CloudFlareProvider) AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool {
-	if attribute == source.CloudflareProxiedKey {
-		var err error
-
-		v1 := p.proxiedByDefault
-		v2 := p.proxiedByDefault
-
-		if value1 != nil {
-			v1, err = strconv.ParseBool(*value1)
-			if err != nil {
-				log.Errorf("Failed to parse attribute [%s]: %v", attribute, *value1)
-				v1 = p.proxiedByDefault
-			}
-		}
-
-		if value2 != nil {
-			v2, err = strconv.ParseBool(*value2)
-			if err != nil {
-				log.Errorf("Failed to parse attribute [%s]: %v", attribute, *value2)
-				v2 = p.proxiedByDefault
-			}
-		}
-
-		return v1 == v2
+func (p *CloudFlareProvider) PropertyValuesEqual(name string, previous string, current string) bool {
+	if name == source.CloudflareProxiedKey {
+		return plan.CompareBoolean(p.proxiedByDefault, name, previous, current)
 	}
 
-	return p.BaseProvider.AttributeValuesEqual(attribute, value1, value2)
+	return p.BaseProvider.PropertyValuesEqual(name, previous, current)
 }
 
 // submitChanges takes a zone and a collection of Changes and sends them as a single transaction.

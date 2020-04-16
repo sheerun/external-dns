@@ -26,23 +26,6 @@ import (
 	"sigs.k8s.io/external-dns/internal/testutils"
 )
 
-type PlanTestComparator struct {
-}
-
-func (p PlanTestComparator) AttributeValuesEqual(attribute string, value1 *string, value2 *string) bool {
-	if (value1 == nil) != (value2 == nil) {
-		return false
-	}
-
-	if value1 == nil {
-		return true
-	}
-
-	return *value1 == *value2
-}
-
-var testComparator = PlanTestComparator{}
-
 type PlanTestSuite struct {
 	suite.Suite
 	fooV1Cname                       *endpoint.Endpoint
@@ -55,6 +38,7 @@ type PlanTestSuite struct {
 	bar127AWithTTL                   *endpoint.Endpoint
 	bar127AWithProviderSpecificTrue  *endpoint.Endpoint
 	bar127AWithProviderSpecificFalse *endpoint.Endpoint
+	bar127AWithProviderSpecificUnset *endpoint.Endpoint
 	bar192A                          *endpoint.Endpoint
 	multiple1                        *endpoint.Endpoint
 	multiple2                        *endpoint.Endpoint
@@ -155,6 +139,15 @@ func (suite *PlanTestSuite) SetupTest() {
 			},
 		},
 	}
+	suite.bar127AWithProviderSpecificUnset = &endpoint.Endpoint{
+		DNSName:    "bar",
+		Targets:    endpoint.Targets{"127.0.0.1"},
+		RecordType: "A",
+		Labels: map[string]string{
+			endpoint.ResourceLabelKey: "ingress/default/bar-127",
+		},
+		ProviderSpecific: endpoint.ProviderSpecific{},
+	}
 	suite.bar192A = &endpoint.Endpoint{
 		DNSName:    "bar",
 		Targets:    endpoint.Targets{"192.168.0.1"},
@@ -217,7 +210,7 @@ func (suite *PlanTestSuite) TestSyncFirstRound() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -238,7 +231,7 @@ func (suite *PlanTestSuite) TestSyncSecondRound() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -259,7 +252,7 @@ func (suite *PlanTestSuite) TestSyncSecondRoundMigration() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -280,7 +273,7 @@ func (suite *PlanTestSuite) TestSyncSecondRoundWithTTLChange() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -301,7 +294,55 @@ func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificChange() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificDefaultFalse() {
+	current := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificFalse}
+	desired := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificUnset}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies: []Policy{&SyncPolicy{}},
+		Current:  current,
+		Desired:  desired,
+		PropertyComparator: func(name, previous, current string) bool {
+			return CompareBoolean(false, name, previous, current)
+		},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificDefualtTrue() {
+	current := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificTrue}
+	desired := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificUnset}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies: []Policy{&SyncPolicy{}},
+		Current:  current,
+		Desired:  desired,
+		PropertyComparator: func(name, previous, current string) bool {
+			return CompareBoolean(true, name, previous, current)
+		},
+	}
+
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -332,7 +373,7 @@ func (suite *PlanTestSuite) TestSyncSecondRoundWithOwnerInherited() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -353,7 +394,7 @@ func (suite *PlanTestSuite) TestIdempotency() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -374,7 +415,7 @@ func (suite *PlanTestSuite) TestDifferentTypes() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -395,7 +436,7 @@ func (suite *PlanTestSuite) TestIgnoreTXT() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -416,7 +457,7 @@ func (suite *PlanTestSuite) TestRemoveEndpoint() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -437,7 +478,7 @@ func (suite *PlanTestSuite) TestRemoveEndpointWithUpsert() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -459,7 +500,7 @@ func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceReplace() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -482,7 +523,7 @@ func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceRetain() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -504,7 +545,7 @@ func (suite *PlanTestSuite) TestMultipleRecordsSameNameDifferentSetIdentifier() 
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
@@ -526,7 +567,7 @@ func (suite *PlanTestSuite) TestSetIdentifierUpdateCreatesAndDeletes() {
 		Desired:  desired,
 	}
 
-	changes := p.Calculate(testComparator).Changes
+	changes := p.Calculate().Changes
 	validateEntries(suite.T(), changes.Create, expectedCreate)
 	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
 	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
