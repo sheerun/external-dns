@@ -18,6 +18,8 @@ package provider
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestEnsureTrailingDot(t *testing.T) {
@@ -34,4 +36,13 @@ func TestEnsureTrailingDot(t *testing.T) {
 			t.Errorf("expected %s, got %s", tc.expected, output)
 		}
 	}
+}
+
+func TestBaseProviderPropertyEquality(t *testing.T) {
+	p := BaseProvider{}
+	assert.True(t, p.PropertyValuesEqual("some.property", "", ""), "Both properties not present")
+	assert.False(t, p.PropertyValuesEqual("some.property", "", "Foo"), "First property missing")
+	assert.False(t, p.PropertyValuesEqual("some.property", "Foo", ""), "Second property missing")
+	assert.True(t, p.PropertyValuesEqual("some.property", "Foo", "Foo"), "Properties the same")
+	assert.False(t, p.PropertyValuesEqual("some.property", "Foo", "Bar"), "Attributes differ")
 }
