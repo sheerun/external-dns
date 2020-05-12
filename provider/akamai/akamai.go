@@ -61,6 +61,7 @@ type AkamaiConfig struct {
 
 // AkamaiProvider implements the DNS provider for Akamai.
 type AkamaiProvider struct {
+	BaseProvider
 	domainFilter endpoint.DomainFilter
 	zoneIDFilter provider.ZoneIDFilter
 	config       edgegrid.Config
