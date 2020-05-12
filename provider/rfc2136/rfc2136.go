@@ -35,6 +35,7 @@ import (
 
 // rfc2136 provider type
 type rfc2136Provider struct {
+	BaseProvider
 	nameserver    string
 	zoneName      string
 	tsigKeyName   string
